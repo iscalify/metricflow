@@ -6,6 +6,19 @@ import { SeedDemoButton } from "./seed-demo-button";
 import { MetricCards } from "./metric-cards";
 import { CampaignTable } from "./campaign-table";
 
+interface InsightRow {
+  campaign_id: string;
+  campaign_name: string | null;
+  objective: string | null;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  reach: number;
+  conversions: number;
+  conversion_value: number;
+  date_start: string;
+}
+
 export default async function AnalyticsPage() {
   const supabase = await createClient();
 
@@ -15,28 +28,68 @@ export default async function AnalyticsPage() {
 
   if (!user) redirect("/login");
 
-  // Fetch connected account
-  const { data: accounts } = await supabase
+  // Fetch connected Meta account (may not exist)
+  const { data: metaAccounts } = await supabase
     .from("meta_ad_accounts")
     .select("id, meta_account_id, meta_account_name")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .limit(1);
 
-  const account = accounts?.[0];
+  const metaAccount = metaAccounts?.[0] ?? null;
 
-  if (!account) {
-    redirect(
-      "/dashboard?meta_error=true&message=No+connected+account.+Connect+Meta+Ads+first.",
+  // Fetch connected Shopify store (may not exist)
+  const { data: shopifyStores } = await supabase
+    .from("shopify_stores")
+    .select("id, shop_domain, shop_name")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .limit(1);
+
+  const shopifyStore = shopifyStores?.[0] ?? null;
+
+  // If nothing is connected, show a helpful message instead of redirecting
+  if (!metaAccount && !shopifyStore) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-2xl font-bold tracking-tight">Analytics</h2>
+          <p className="text-muted-foreground">
+            Connect a platform to start viewing analytics
+          </p>
+        </div>
+        <Separator />
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-lg font-semibold">No platforms connected</p>
+          <p className="mb-6 max-w-md text-sm text-muted-foreground">
+            Go to the Dashboard and connect your Meta Ad Account or Shopify store
+            to start tracking performance analytics.
+          </p>
+          <a href="/dashboard">
+            <button className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+              Go to Dashboard
+            </button>
+          </a>
+        </div>
+      </div>
     );
   }
 
-  // Fetch insights (last 30 days aggregated per campaign)
-  const { data: insights } = await supabase
-    .from("meta_campaign_insights")
-    .select("*")
-    .eq("meta_ad_account_id", account.id)
-    .order("date_start", { ascending: false });
+  // Build a label for what's connected
+  const connectedPlatforms: string[] = [];
+  if (metaAccount) connectedPlatforms.push(metaAccount.meta_account_name ?? metaAccount.meta_account_id);
+  if (shopifyStore) connectedPlatforms.push(shopifyStore.shop_name ?? shopifyStore.shop_domain);
+
+  // Fetch Meta insights if account exists
+  let insights: InsightRow[] = [];
+  if (metaAccount) {
+    const { data } = await supabase
+      .from("meta_campaign_insights")
+      .select("*")
+      .eq("meta_ad_account_id", metaAccount.id)
+      .order("date_start", { ascending: false });
+    insights = (data ?? []) as InsightRow[];
+  }
 
   // Aggregate totals across all campaigns / days
   const totals = (insights ?? []).reduce(
@@ -132,13 +185,13 @@ export default async function AnalyticsPage() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Analytics</h2>
           <p className="text-muted-foreground">
-            Campaign performance for{" "}
+            Performance data for{" "}
             <span className="font-medium text-foreground">
-              {account.meta_account_name ?? account.meta_account_id}
+              {connectedPlatforms.join(" & ")}
             </span>
           </p>
         </div>
-        <SyncButton />
+        {metaAccount && <SyncButton />}
       </div>
 
       <Separator />
@@ -147,12 +200,20 @@ export default async function AnalyticsPage() {
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <p className="text-lg font-semibold">No insights data yet</p>
           <p className="mb-6 max-w-md text-sm text-muted-foreground">
-            Click &quot;Sync Data&quot; to fetch your campaign performance from
-            Meta, or load demo data to preview the dashboard.
+            {metaAccount
+              ? 'Click "Sync Data" to fetch your campaign performance from Meta, or load demo data to preview the dashboard.'
+              : "Connect a Meta Ad Account from the Dashboard to sync campaign insights, or load demo data to preview."}
           </p>
           <div className="flex items-center gap-4">
-            <SyncButton />
-            <SeedDemoButton />
+            {metaAccount && <SyncButton />}
+            {metaAccount && <SeedDemoButton />}
+            {!metaAccount && (
+              <a href="/dashboard">
+                <button className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+                  Go to Dashboard
+                </button>
+              </a>
+            )}
           </div>
         </div>
       ) : (
